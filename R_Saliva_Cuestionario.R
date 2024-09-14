@@ -131,11 +131,14 @@ Actigraphdatos <- Actigraphdatos %>%
 
 
 quantiles_Vector_Magnitude <- quantile(Actigraphdatos$Vector.Magnitude, probs = c(0.05, 0.95), na.rm = TRUE)
+quantiles_HR <- quantile(Actigraphdatos$HR, probs = c(0.05, 0.95), na.rm = TRUE)
 
 # Paso 1: Filtrar los datos para los cuantiles de Vector.Magnitude
 Actigraphdatos_filtrados <- Actigraphdatos %>%
   filter(Vector.Magnitude >= quantiles_Vector_Magnitude[1] & 
-           Vector.Magnitude <= quantiles_Vector_Magnitude[2])
+           Vector.Magnitude <= quantiles_Vector_Magnitude[2]&
+           HR >= quantiles_HR[1] & 
+           HR <= quantiles_HR[2])
 
 # Paso 2: Escalar las variables Vector.Magnitude y tilt con min-max
 Actigraphdatos_filtrados <- Actigraphdatos_filtrados %>%
@@ -448,12 +451,131 @@ calcular_ci_por_usuario <- function(df) {
   return(resultados_df)
 }
 
- resultados_ci <- calcular_ci_por_usuario(summary_minutos)
+resultados_ci <- calcular_ci_por_usuario(summary_minutos)
  
 
  print(resultados_ci)
  
+ ################################
+ # Función para calcular el Índice de Variabilidad (IV) para cada usuario
+ calcular_iv_por_usuario <- function(df) {
+   
+   # Obtener una lista de usuarios únicos
+   usuarios <- unique(df$user)
+   
+   # Crear una lista para almacenar los resultados
+   resultados <- list()
+   
+   # Recorrer cada usuario
+   for (usuario in usuarios) {
+     
+     # Filtrar los datos para el usuario actual
+     user_data <- subset(df, user == usuario)
+     
+     # Extraer los valores de la frecuencia cardíaca
+     frecuencia_cardiaca <- user_data$HR
+     
+     # Comprobar si hay suficientes datos para el cálculo
+     if (length(frecuencia_cardiaca) < 2) {
+       warning(paste("Datos insuficientes para calcular IV para el usuario", usuario))
+       next
+     }
+     
+     # Calcular la diferencia sucesiva
+     diff_frecuencia <- diff(frecuencia_cardiaca)
+     
+     # Calcular la suma de los cuadrados de las diferencias sucesivas
+     sum_diff_squared <- sum(diff_frecuencia^2)
+     
+     # Calcular la media de la frecuencia cardíaca
+     mean_frecuencia <- mean(frecuencia_cardiaca)
+     
+     # Calcular la suma de los cuadrados de las diferencias respecto a la media
+     sum_squared_diff_mean <- sum((frecuencia_cardiaca - mean_frecuencia)^2)
+     
+     # Calcular el Índice de Variabilidad (IV)
+     n <- length(frecuencia_cardiaca)
+     IV <- (n * sum_diff_squared) / ((n - 1) * sum_squared_diff_mean)
+     
+     # Almacenar el resultado en la lista
+     resultados[[as.character(usuario)]] <- IV
+   }
+   
+   # Convertir la lista en un data frame
+   resultados_df <- data.frame(user = names(resultados), IV = unlist(resultados))
+   
+   return(resultados_df)
+ }
  
+ # Supongamos que 'summary_minutos' es tu dataframe y contiene la columna 'HR'
+ resultados_iv <- calcular_iv_por_usuario(summary_minutos)
+ 
+ # Imprimir los resultados
+ print(resultados_iv)
+
+ 
+ 
+ resultados_ci_VAR_caracteristicas <- resultados_ci %>%
+   inner_join(Caracteristicasdatos, by = "user")%>%
+   inner_join(resultados_iv, by = "user")%>%
+   mutate(Height=Height/100)
+ 
+ 
+ df_numeric3 <- resultados_ci_VAR_caracteristicas %>%
+   select_if(is.numeric)
+ 
+ 
+ mean_age <- df_numeric3 %>%
+   filter(user != "user_18") %>%
+   pull(Age) %>%
+   mean(na.rm = TRUE)
+ 
+ 
+ df_numeric3 <- df_numeric3 %>%
+   mutate(Age = ifelse(Age != 0,Age, mean_age ))
+ df_numeric3 <- df_numeric3[c("CI", "IV", "Weight", "Height", "Age")]
+ 
+ cor_matrix <- cor(df_numeric3, use = "complete.obs")
+ 
+ 
+ par(mfrow=c(1,1))
+ 
+ corrplot(cor_matrix, method = "color", type = "upper", 
+          tl.cex = 0.8, tl.col = "black", 
+          addCoef.col = "black")
+ 
+ 
+ 
+ resultados_ci_VAR_caracteristicas <- resultados_ci_VAR_caracteristicas%>%
+   mutate(Age = ifelse(Age != 0,Age, mean_age ),
+          IMC= Weight/(Height)^2)
+ 
+
+ 
+ df_numeric4 <- resultados_ci_VAR_caracteristicas %>%
+   select_if(is.numeric)
+ 
+ cor_matrix2 <- cor(df_numeric4, use = "complete.obs")
+ 
+ 
+ par(mfrow=c(1,1))
+ 
+ corrplot(cor_matrix2, method = "color", type = "upper", 
+          tl.cex = 0.8, tl.col = "black", 
+          addCoef.col = "black")
+ 
+ 
+ 
+ 
+ model<-lm(IMC ~ CI + IV  + Age , data = resultados_ci_VAR_caracteristicas)
+ 
+ par(mfrow=c(2,2))
+ plot(model)
+ summary(model)
+ 
+ 
+ 
+  
  # Gráfico para  user10
  summary_15minutos_user10 <- summary_minutos %>%
    filter(user %in% c( "user_10")) %>%
@@ -491,6 +613,45 @@ calcular_ci_por_usuario <- function(df) {
          axis.title.y = element_text(size = 16)) 
  
  
+ # Gráfico para  user2
+ summary_15minutos_user2 <- summary_minutos %>%
+   filter(user %in% c( "user_2")) %>%
+   mutate(hora_in = intervalo_15min * 15 / 60)
+ 
+ #Gráfico para un usuario
+ ggplot(summary_15minutos_user2, aes(x = hora_in, y = HR, color = user)) +
+   geom_line(size = 1.2) +
+   labs(title = paste("Promedio de FC por Minuto para el Usuario 2"),
+        x = "Hora",
+        y = "Frecuencia cardiaca") +
+   theme_minimal() +
+   theme(legend.title = element_blank())+
+   theme(axis.text.x = element_text(size = 14),   # Aumentar tamaño del texto en el eje X
+         axis.text.y = element_text(size = 14),   # Aumentar tamaño del texto en el eje Y
+         axis.title.x = element_text(size = 16),  # Aumentar tamaño del título del eje X
+         axis.title.y = element_text(size = 16)) 
+ 
+ # Gráfico para  user19
+ summary_15minutos_user19 <- summary_minutos %>%
+   filter(user %in% c( "user_19")) %>%
+   mutate(hora_in = intervalo_15min * 15 / 60)
+ 
+ #Gráfico para un usuario
+ ggplot(summary_15minutos_user19, aes(x = hora_in, y = HR, color = user)) +
+   geom_line(size = 1.2) +
+   labs(title = paste("Promedio de FC por Minuto para el Usuario 19"),
+        x = "Hora",
+        y = "Frecuencia cardiaca") +
+   theme_minimal() +
+   theme(legend.title = element_blank())+
+   theme(axis.text.x = element_text(size = 14),   # Aumentar tamaño del texto en el eje X
+         axis.text.y = element_text(size = 14),   # Aumentar tamaño del texto en el eje Y
+         axis.title.x = element_text(size = 16),  # Aumentar tamaño del título del eje X
+         axis.title.y = element_text(size = 16)) 
+ 
+ 
+ 
+ 
  #tiene que ver con la varianza?
  summary_var <- summary_minutos %>%
    group_by(user) %>%
@@ -498,44 +659,18 @@ calcular_ci_por_usuario <- function(df) {
      Var_HR = var(HR)
    )
 
- resultados_ci_VAR_caracteristicas <- resultados_ci %>%
-   inner_join(Caracteristicasdatos, by = "user")%>%
-   mutate(Height=Height/100)
- 
- 
- df_numeric3 <- resultados_ci_VAR_caracteristicas %>%
-   select_if(is.numeric)
- 
- 
- mean_age <- df_numeric3 %>%
-   filter(user != "user_18") %>%
-   pull(Age) %>%
-   mean(na.rm = TRUE)
- 
 
-df_numeric3 <- df_numeric3 %>%
-  mutate(Age = ifelse(Age != 0,Age, mean_age ))
-
-cor_matrix <- cor(df_numeric3, use = "complete.obs")
  
- 
-par(mfrow=c(1,1))
- 
-corrplot(cor_matrix, method = "color", type = "upper", 
-          tl.cex = 0.8, tl.col = "black", 
-          addCoef.col = "black")
- 
- 
- library(plotly)
+library(plotly)
 
 resultados_ci_VAR_caracteristicas <- resultados_ci_VAR_caracteristicas%>%
   mutate(Age = ifelse(Age != 0,Age, mean_age ),
          IMC= Weight/(Height)^2)
 
-
+print(cor(resultados_ci_VAR_caracteristicas$IMC,resultados_ci$ci))
   
  # Crear un gráfico con ggplot2
- ggplot(resultados_ci_VAR_caracteristicas, aes(x = CI, y = IMC)) +
+p<-ggplot(resultados_ci_VAR_caracteristicas, aes(x = CI, y = IMC)) +
    geom_point(size = 3) +  # Añadir puntos
    geom_smooth(method = "lm", color = "blue", size = 1.5) +  # Añadir línea de regresión
    labs(title = "Relación entre CI e IMC", x = "CI", y = "IMC") +
@@ -546,14 +681,15 @@ resultados_ci_VAR_caracteristicas <- resultados_ci_VAR_caracteristicas%>%
      axis.text.x = element_text(size = 12),    # Tamaño del texto de las etiquetas del eje x
      axis.text.y = element_text(size = 12)     # Tamaño del texto de las etiquetas del eje y
    )
+p
  # Convertir el gráfico a interactivo con plotly
- #p_interactivo <- ggplotly(p, tooltip = "text")
+# p_interactivo <- ggplotly(p, tooltip = "text")
  
  # Mostrar el gráfico interactivo
  #p_interactivo
  
  
-model<-lm(CI ~ IMC , data = resultados_ci_VAR_caracteristicas)
+model<-lm(IMC ~ CI+ IV , data = resultados_ci_VAR_caracteristicas)
 
 par(mfrow=c(2,2))
 plot(model)
@@ -663,4 +799,7 @@ summary(model)
      axis.text.x = element_text(size = 12),   # Tamaño del texto de las etiquetas del eje x
      axis.text.y = element_text(size = 12)    # Tamaño del texto de las etiquetas del eje y
    )
+ 
+ 
+ 
  
